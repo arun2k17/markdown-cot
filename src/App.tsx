@@ -1,5 +1,8 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
+import type { Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 import {
   FluentProvider,
   webLightTheme,
@@ -21,6 +24,7 @@ import {
   CodeTextRegular,
   DarkThemeRegular,
   LightbulbRegular,
+  ThinkingRegular,
 } from "@fluentui/react-icons";
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
@@ -127,18 +131,100 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
   },
+  cotBlock: {
+    border: `2px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorNeutralBackground2,
+    padding: tokens.spacingVerticalM,
+    margin: `${tokens.spacingVerticalM} 0`,
+    display: "flex",
+    alignItems: "flex-start",
+    gap: tokens.spacingHorizontalS,
+    "& .cot-icon": {
+      color: tokens.colorNeutralForeground2,
+      marginTop: tokens.spacingVerticalXXS,
+    },
+    "& .cot-content": {
+      flex: 1,
+      color: tokens.colorNeutralForeground1,
+      lineHeight: tokens.lineHeightBase300,
+    },
+  },
 });
+
+// Custom COT (Chain of Thought) component
+const CotBlock = ({
+  children,
+  styles,
+}: {
+  children: React.ReactNode;
+  styles: ReturnType<typeof useStyles>;
+}) => {
+  return (
+    <div className={styles.cotBlock}>
+      <ThinkingRegular className="cot-icon" />
+      <div className="cot-content">{children}</div>
+    </div>
+  );
+};
 
 function App() {
   const [count, setCount] = useState(0);
   const [isDarkTheme, setIsDarkTheme] = useState(false);
   const styles = useStyles();
 
+  // Custom renderer for code blocks to handle COT blocks
+  const customRenderers: Components = {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    code: (props: any) => {
+      const { inline, className, children } = props;
+      const match = /language-(\w+)/.exec(className || "");
+      const language = match ? match[1] : "";
+
+      if (language === "cot" && !inline) {
+        return <CotBlock styles={styles}>{children}</CotBlock>;
+      }
+
+      return inline ? (
+        <code className={className}>{children}</code>
+      ) : (
+        <pre>
+          <code className={className}>{children}</code>
+        </pre>
+      );
+    },
+  };
+
   const sampleMarkdown = `# Welcome to React Markdown Demo with Fluent UI
 
 This is a **sample markdown** document that demonstrates various features with **Fluent UI v9** styling:
 
-## Features
+## Chain of Thought (COT) Blocks
+
+This is our custom COT fenced block feature:
+
+\`\`\`cot
+This is a chain of thought reasoning block. It helps break down complex problems step by step. For example, when solving a math problem, I would first identify what I know, then determine what I need to find, and finally work through the solution methodically.
+\`\`\`
+
+You can use multiple COT blocks to show different thinking processes:
+
+\`\`\`cot
+Step 1: Understand the problem requirements
+- We need a custom fenced block called "cot"
+- It should have a grey border
+- It should be styled as a block element in the markdown flow
+\`\`\`
+
+\`\`\`cot
+Step 2: Implementation approach
+- Create a custom renderer for code blocks
+- Check if the language is "cot"
+- Render with custom COT component using Fluent UI styling
+- Add thinking icon to make it visually distinctive
+\`\`\`
+
+## Other Features
 
 - **Bold text** and *italic text*
 - [Links to external sites](https://react.dev)
@@ -147,12 +233,12 @@ This is a **sample markdown** document that demonstrates various features with *
   2. Second item with \`inline code\`
   3. Third item
 
-### Code Blocks
+### Regular Code Blocks
 
 \`\`\`javascript
 function greet(name) {
   console.log('Hello, ' + name + '!');
-  return 'Welcome to the Fluent UI markdown world!';
+  return 'Welcome to the Fluent UI markdown world with COT support!';
 }
 \`\`\`
 
@@ -170,12 +256,17 @@ function greet(name) {
 | Code blocks | ✅ | Working with Fluent UI |
 | Tables | ✅ | Working with Fluent UI |
 | Dark Theme | ✅ | Toggle available |
+| COT Blocks | ✅ | **NEW!** Custom fenced blocks |
 
 ---
 
 **Current count:** ${count}
 
 *Try clicking the button below to see the count update in this markdown!*
+
+\`\`\`cot
+The counter demonstrates React state integration with markdown content. Each time the button is clicked, the entire markdown is re-rendered with the updated count value, showing how dynamic content can be seamlessly integrated with static markdown.
+\`\`\`
 `;
 
   return (
@@ -248,7 +339,13 @@ function greet(name) {
             }
           />
           <div className={styles.markdownContent}>
-            <ReactMarkdown>{sampleMarkdown}</ReactMarkdown>
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeRaw]}
+              components={customRenderers}
+            >
+              {sampleMarkdown}
+            </ReactMarkdown>
           </div>
         </Card>
       </div>
