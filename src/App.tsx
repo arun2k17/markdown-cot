@@ -28,6 +28,8 @@ import {
 } from "@fluentui/react-icons";
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
+import remarkCot from "./remark-cot";
+import CotGroupWrapper from "./CotGroupWrapper";
 
 const useStyles = makeStyles({
   container: {
@@ -195,6 +197,13 @@ function App() {
     },
   };
 
+  // Combine with the custom element mapping for the remark plugin
+  const allComponents = {
+    // ...customRenderers,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    "cot-group": CotGroupWrapper as any,
+  };
+
   const sampleMarkdown = `# Welcome to React Markdown Demo with Fluent UI
 
 This is a **sample markdown** document that demonstrates various features with **Fluent UI v9** styling:
@@ -202,27 +211,6 @@ This is a **sample markdown** document that demonstrates various features with *
 ## Chain of Thought (COT) Blocks
 
 This is our custom COT fenced block feature:
-
-\`\`\`cot
-This is a chain of thought reasoning block. It helps break down complex problems step by step. For example, when solving a math problem, I would first identify what I know, then determine what I need to find, and finally work through the solution methodically.
-\`\`\`
-
-You can use multiple COT blocks to show different thinking processes:
-
-\`\`\`cot
-Step 1: Understand the problem requirements
-- We need a custom fenced block called "cot"
-- It should have a grey border
-- It should be styled as a block element in the markdown flow
-\`\`\`
-
-\`\`\`cot
-Step 2: Implementation approach
-- Create a custom renderer for code blocks
-- Check if the language is "cot"
-- Render with custom COT component using Fluent UI styling
-- Add thinking icon to make it visually distinctive
-\`\`\`
 
 ## Other Features
 
@@ -264,8 +252,53 @@ function greet(name) {
 
 *Try clicking the button below to see the count update in this markdown!*
 
-\`\`\`cot
-The counter demonstrates React state integration with markdown content. Each time the button is clicked, the entire markdown is re-rendered with the updated count value, showing how dynamic content can be seamlessly integrated with static markdown.
+\`\`\`cot-init {id=sess-42 status=thinking}
+Generate SQL for top 5 customers by revenue.
+
+Assume a table \`orders(customer_id, amount)\`. Will aggregate and sort with a deterministic tie-break.
+\`\`\`
+
+\`\`\`cot-step {group=sess-42 id=plan}
+Plan approach.
+
+Use GROUP BY on \`customer_id\`, SUM(amount), and ORDER BY revenue DESC with a tie-break on \`customer_id\`.
+\`\`\`
+
+\`\`\`cot-step {group=sess-42 id=answer}
+Draft initial SQL.
+
+SELECT customer_id, SUM(amount) AS revenue
+FROM orders
+GROUP BY customer_id
+ORDER BY revenue DESC, customer_id
+LIMIT 5;
+\`\`\`
+
+\`\`\`cot-step {group=sess-42 id=answer}
+Refine SQL and clarify assumptions.
+
+Assume \`amount\` is numeric and net of refunds. Keep tie-break on \`customer_id\` for stable ordering.
+SELECT customer_id, SUM(amount) AS revenue
+FROM orders
+GROUP BY customer_id
+ORDER BY revenue DESC, customer_id
+LIMIT 5;
+\`\`\`
+
+\`\`\`cot-step {group=sess-42 id=answer}
+Done — final SQL ready.
+
+SELECT customer_id, SUM(amount) AS revenue
+FROM orders
+GROUP BY customer_id
+ORDER BY revenue DESC, customer_id
+LIMIT 5;
+\`\`\`
+
+\`\`\`cot-summary {group=sess-42 status=done}
+Completed.
+
+Final SQL emitted with deterministic ordering; ready to run.
 \`\`\`
 `;
 
@@ -339,10 +372,11 @@ The counter demonstrates React state integration with markdown content. Each tim
             }
           />
           <div className={styles.markdownContent}>
+            <Text>Testing both simple and advanced COT blocks...</Text>
             <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
+              remarkPlugins={[remarkGfm, remarkCot]}
               rehypePlugins={[rehypeRaw]}
-              components={customRenderers}
+              components={allComponents}
             >
               {sampleMarkdown}
             </ReactMarkdown>
