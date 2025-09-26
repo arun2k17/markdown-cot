@@ -3,37 +3,28 @@ import type { Plugin } from 'unified';
 import { visit } from 'unist-util-visit';
 import type { Root, Code, Content, Parent } from 'mdast';
 
-type CoTStatus = string; // "thinking" | "done" | etc. (you control the vocabulary)
+type CoTStatus = string;
+type Step = { id: string; summary: string; description?: string; order: number };
 
-type Step = {
-    id: string;
-    summary: string;
-    description?: string;
-    order: number;         // first appearance order (stable)
-};
+type NodeRef = { parent: Parent; index: number; node: Content; kind: 'init' | 'step' | 'summary' };
 
 type Group = {
     id: string;
-    title?: string;        // from cot-init summary
-    description?: string;  // from cot-init description
-    status: CoTStatus;     // last status seen (cot-summary or cot-init)
-    closed: boolean;       // status === 'done'
+    title?: string;
+    description?: string;
+    status: CoTStatus;
+    closed: boolean;
     steps: Map<string, Step>;
-    firstOrder: number;    // document order index of the first block seen for this group
-    anchor?: NodeRef;      // where to insert <cot-group>
-    // bookkeeping
-    _seenStepIds: Set<string>;
+    nodes: NodeRef[];          // all cot nodes for this group
+    anchor?: NodeRef;          // where we will render <cot-group>
+    firstStepOrder: number;    // for ordering steps by first appearance
 };
 
-type NodeRef = { parent: Parent; index: number; node: Content };
-
-function parseAttrs(meta?: string | null): Record<string, unknown> {
-    // meta is like `{group=sess-42 id=answer status=thinking}`
+function parseAttrs(meta?: string | null): Record<string, any> {
     if (!meta) return {};
     const m = meta.trim();
     const body = m.startsWith('{') && m.endsWith('}') ? m.slice(1, -1) : m;
-    const attrs: Record<string, unknown> = {};
-    // match key=value with quoted or bare values
+    const attrs: Record<string, any> = {};
     const re = /([a-zA-Z_][\w-]*)=("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|[^\s"']+)/g;
     let match: RegExpExecArray | null;
     while ((match = re.exec(body))) {
@@ -42,7 +33,6 @@ function parseAttrs(meta?: string | null): Record<string, unknown> {
         if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) {
             raw = raw.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'");
         }
-        // coerce booleans/numbers when obvious
         const val =
             raw === 'true' ? true :
                 raw === 'false' ? false :
@@ -55,52 +45,27 @@ function parseAttrs(meta?: string | null): Record<string, unknown> {
 
 function splitSummaryDescription(value: string) {
     const lines = value.replace(/\r\n/g, '\n').split('\n');
-    // first non-empty line => summary
+    // summary = first non-empty line
     let i = 0;
     while (i < lines.length && lines[i].trim() === '') i++;
     const summary = (lines[i] || '').trim();
-    // description is content after the first blank line that *follows* the summary line
+    // description = everything after a blank line (or just the rest)
     i++;
-    // find the first blank line (optional)
-    if (i < lines.length && lines[i].trim() !== '') {
-        // require a blank separator; if not present, treat rest as description anyway
-    }
-    const descStart = i;
-    const description = lines.slice(descStart).join('\n').trim() || undefined;
+    // find a blank separator (optional)
+    while (i < lines.length && lines[i].trim() !== '') i++;
+    const description = lines.slice(i + 1).join('\n').trim() || undefined;
     return { summary, description };
 }
 
-function setAnchorIfEarlier(g: Group, ref: NodeRef, globalOrder: number) {
-    if (!g.anchor || g.firstOrder > globalOrder) {
-        g.anchor = ref;
-        g.firstOrder = globalOrder;
-    }
-}
-
 function removeAt(parent: Parent, index: number) {
-    parent.children.splice(index, 1);
+    (parent.children as Content[]).splice(index, 1);
 }
 
-export interface RemarkCotOptions {
-    // no options yet; reserved for future (e.g., custom element name)
-    elementName?: string; // default: 'cot-group'
-}
-
-/**
- * remark-cot:
- *  - gathers cot-init/step/summary per group
- *  - replaces the first block with a single <cot-group> element
- *  - removes the rest of cot-* blocks for that group
- */
-const remarkCot: Plugin<[RemarkCotOptions?], Root> = (opts?: RemarkCotOptions) => {
-    const elementName = opts?.elementName ?? 'cot-group';
-
+const remarkCot: Plugin<[], Root> = () => {
     return (tree) => {
         const groups = new Map<string, Group>();
-        const toRemove: Array<NodeRef> = [];
-        let globalOrder = 0;
 
-        // 1) scan & collect
+        // 1) Collect all cot-* nodes, compute final state per group
         visit(tree, 'code', (node: Code, index, parent) => {
             if (!parent || typeof index !== 'number') return;
             const lang = (node.lang || '').trim();
@@ -108,15 +73,16 @@ const remarkCot: Plugin<[RemarkCotOptions?], Root> = (opts?: RemarkCotOptions) =
 
             const attrs = parseAttrs(node.meta);
             const value = node.value || '';
-            globalOrder += 1;
-
-            const ref: NodeRef = { parent, index, node };
+            const ref: NodeRef = {
+                parent,
+                index,
+                node,
+                kind: lang === 'cot-init' ? 'init' : lang === 'cot-summary' ? 'summary' : 'step'
+            };
 
             if (lang === 'cot-init') {
-                const groupId = String(attrs.id || '').trim();
-                if (!groupId) return; // invalid init; ignore
-
-                const { summary, description } = splitSummaryDescription(value);
+                const groupId = String(attrs.group || '').trim();
+                if (!groupId) return;
                 const g = groups.get(groupId) ?? {
                     id: groupId,
                     title: undefined,
@@ -124,31 +90,24 @@ const remarkCot: Plugin<[RemarkCotOptions?], Root> = (opts?: RemarkCotOptions) =
                     status: String(attrs.status ?? 'thinking'),
                     closed: false,
                     steps: new Map(),
-                    firstOrder: Number.MAX_SAFE_INTEGER,
+                    nodes: [],
                     anchor: undefined,
-                    _seenStepIds: new Set(),
+                    firstStepOrder: 0,
                 };
-
-                // Only the first cot-init sets title/description; later cot-init blocks are ignored by spec.
+                const { summary, description } = splitSummaryDescription(value);
                 if (g.title == null && summary) g.title = summary;
                 if (g.description == null && description) g.description = description;
-
-                // status from init is only used if no later cot-summary overrides it
                 g.status = g.status ?? String(attrs.status ?? 'thinking');
                 g.closed = g.status === 'done';
-
-                setAnchorIfEarlier(g, ref, globalOrder);
+                g.nodes.push(ref);
+                // provisional anchor (will be overridden by any summary later)
+                if (!g.anchor) g.anchor = ref;
                 groups.set(groupId, g);
-
-                // We'll replace this node later with <cot-group>
-                toRemove.push(ref);
 
             } else if (lang === 'cot-step') {
                 const groupId = String(attrs.group || '').trim();
                 const stepId = String(attrs.id || '').trim();
                 if (!groupId || !stepId) return;
-
-                const { summary, description } = splitSummaryDescription(value);
                 const g = groups.get(groupId) ?? {
                     id: groupId,
                     title: undefined,
@@ -156,33 +115,29 @@ const remarkCot: Plugin<[RemarkCotOptions?], Root> = (opts?: RemarkCotOptions) =
                     status: 'thinking',
                     closed: false,
                     steps: new Map(),
-                    firstOrder: Number.MAX_SAFE_INTEGER,
+                    nodes: [],
                     anchor: undefined,
-                    _seenStepIds: new Set(),
+                    firstStepOrder: 0,
                 };
-
-                // respect terminal rule: ignore anything after status=done
                 if (!g.closed) {
+                    const { summary, description } = splitSummaryDescription(value);
                     if (!g.steps.has(stepId)) {
-                        const order = g.steps.size + 1; // order by first appearance
+                        const order = ++g.firstStepOrder;
                         g.steps.set(stepId, { id: stepId, summary, description, order });
                     } else {
-                        // update existing (last write wins), keep order
                         const prev = g.steps.get(stepId)!;
                         g.steps.set(stepId, { ...prev, summary, description });
                     }
                 }
-
-                setAnchorIfEarlier(g, ref, globalOrder);
+                g.nodes.push(ref);
+                if (!g.anchor) g.anchor = ref; // still provisional until we see a summary
                 groups.set(groupId, g);
-                toRemove.push(ref);
 
             } else if (lang === 'cot-summary') {
                 const groupId = String(attrs.group || '').trim();
                 if (!groupId) return;
                 const status = String(attrs.status ?? '').trim();
                 if (!status) return;
-
                 const g = groups.get(groupId) ?? {
                     id: groupId,
                     title: undefined,
@@ -190,30 +145,30 @@ const remarkCot: Plugin<[RemarkCotOptions?], Root> = (opts?: RemarkCotOptions) =
                     status: 'thinking',
                     closed: false,
                     steps: new Map(),
-                    firstOrder: Number.MAX_SAFE_INTEGER,
+                    nodes: [],
                     anchor: undefined,
-                    _seenStepIds: new Set(),
+                    firstStepOrder: 0,
                 };
-
                 if (!g.closed) {
                     g.status = status;
                     g.closed = status === 'done';
                 }
-
-                setAnchorIfEarlier(g, ref, globalOrder);
+                g.nodes.push(ref);
+                // **Prefer summary as the final anchor**
+                g.anchor = ref;
                 groups.set(groupId, g);
-                toRemove.push(ref);
             }
         });
 
-        // 2) replace anchor nodes with <cot-group> per group
+        // 2) For each group: replace the anchor with <cot-group>, remove all other cot-* nodes
         for (const g of groups.values()) {
             if (!g.anchor) continue;
-            const { parent, index } = g.anchor;
 
-            // Build a custom mdast node that react-markdown will turn into a custom element.
+            // Build steps array (sorted by first appearance)
             const steps = Array.from(g.steps.values()).sort((a, b) => a.order - b.order);
 
+            // Replace anchor node
+            const { parent, index } = g.anchor;
             const elementNode: any = {
                 type: 'cotGroup',
                 data: {
@@ -224,30 +179,25 @@ const remarkCot: Plugin<[RemarkCotOptions?], Root> = (opts?: RemarkCotOptions) =
                         'data-description': g.description ?? '',
                         'data-status': g.status ?? 'thinking',
                         'data-closed': String(g.closed ?? false),
-                        'data-steps': JSON.stringify(steps),   // <-- JSON in data attribute
+                        'data-steps': JSON.stringify(steps),
                     },
                 },
                 children: [],
             };
+            (parent.children as Content[])[index] = elementNode;
 
-            (parent.children as Content[])[index] = elementNode as unknown as Content;
-        }
-
-        // 3) remove all other cot-* code blocks (non-anchor ones)
-        // We already replaced anchors; now drop the rest, adjusting indices as we go.
-        // Sort by parent uniqueness then descending index to avoid shifting issues.
-        const byParent = new Map<Parent, NodeRef[]>();
-        for (const r of toRemove) {
-            // Skip the anchor we already replaced
-            const g = Array.from(groups.values()).find(gr => gr.anchor?.node === r.node);
-            if (g && g.anchor?.node === r.node) continue;
-            const arr = byParent.get(r.parent) ?? [];
-            arr.push(r);
-            byParent.set(r.parent, arr);
-        }
-        for (const [parent, refs] of byParent.entries()) {
-            refs.sort((a, b) => b.index - a.index);
-            for (const r of refs) removeAt(parent, r.index);
+            // Remove all other group nodes (descending index per parent)
+            const byParent = new Map<Parent, NodeRef[]>();
+            for (const r of g.nodes) {
+                if (r === g.anchor) continue; // keep anchor (we already replaced it)
+                const arr = byParent.get(r.parent) ?? [];
+                arr.push(r);
+                byParent.set(r.parent, arr);
+            }
+            for (const [p, refs] of byParent.entries()) {
+                refs.sort((a, b) => b.index - a.index);
+                for (const r of refs) removeAt(p, r.index);
+            }
         }
     };
 };

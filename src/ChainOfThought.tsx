@@ -177,13 +177,6 @@ export default function ChainOfThought(props: ChainOfThoughtProps) {
               </li>
             ))}
           </ol>
-
-          {closed && (
-            <Text className={styles.closedNote}>
-              Group marked <Text weight="semibold">done</Text>. Further CoT
-              updates were ignored.
-            </Text>
-          )}
         </div>
       )}
     </section>

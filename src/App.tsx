@@ -6,16 +6,11 @@ import rehypeRaw from "rehype-raw";
 import {
   FluentProvider,
   webLightTheme,
-  webDarkTheme,
-  Button,
   Card,
   CardHeader,
-  CardPreview,
   Text,
-  Title1,
   Title2,
-  Image,
-  Switch,
+  Textarea,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
@@ -35,9 +30,11 @@ const useStyles = makeStyles({
   container: {
     display: "flex",
     flexDirection: "column",
-    alignItems: "center",
-    padding: tokens.spacingVerticalXXL,
+    alignItems: "stretch",
+    padding: tokens.spacingVerticalL,
     gap: tokens.spacingVerticalXL,
+    width: "100%",
+    maxWidth: "none",
   },
   logoContainer: {
     display: "flex",
@@ -59,11 +56,9 @@ const useStyles = makeStyles({
     },
   },
   headerCard: {
-    maxWidth: "600px",
     width: "100%",
   },
   markdownCard: {
-    maxWidth: "800px",
     width: "100%",
     marginTop: tokens.spacingVerticalXL,
   },
@@ -133,6 +128,16 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: tokens.spacingHorizontalS,
   },
+  editorCard: {
+    width: "100%",
+    marginTop: tokens.spacingVerticalXL,
+  },
+  editorTextarea: {
+    minHeight: "500px",
+    width: "100%",
+    fontFamily: "monospace",
+    fontSize: tokens.fontSizeBase300,
+  },
   cotBlock: {
     border: `2px solid ${tokens.colorNeutralStroke2}`,
     borderRadius: tokens.borderRadiusMedium,
@@ -154,231 +159,80 @@ const useStyles = makeStyles({
   },
 });
 
-// Custom COT (Chain of Thought) component
-const CotBlock = ({
-  children,
-  styles,
-}: {
-  children: React.ReactNode;
-  styles: ReturnType<typeof useStyles>;
-}) => {
-  return (
-    <div className={styles.cotBlock}>
-      <ThinkingRegular className="cot-icon" />
-      <div className="cot-content">{children}</div>
-    </div>
-  );
-};
-
 function App() {
-  const [count, setCount] = useState(0);
-  const [isDarkTheme, setIsDarkTheme] = useState(false);
+  const [markdownContent, setMarkdownContent] = useState(`
+Try editing this markdown content and see it rendered in real-time!
+
+\`\`\`cot-init {group=demo title="Demo Problem" status=thinking}
+Let's demonstrate the advanced COT functionality with a sample problem.
+\`\`\`
+
+\`\`\`cot-step {group=demo id=step1}
+First step of reasoning
+
+This is where we break down the problem into manageable pieces.
+\`\`\`
+
+\`\`\`cot-step {group=demo id=step2}
+Second step of reasoning
+
+Here we build on our previous understanding and move forward.
+\`\`\`
+
+\`\`\`cot-summary {group=demo status=done}
+Problem solved!
+
+We've successfully demonstrated both simple and advanced COT blocks.
+\`\`\`
+
+`);
   const styles = useStyles();
-
-  // Custom renderer for code blocks to handle COT blocks
-  const customRenderers: Components = {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    code: (props: any) => {
-      const { inline, className, children } = props;
-      const match = /language-(\w+)/.exec(className || "");
-      const language = match ? match[1] : "";
-
-      if (language === "cot" && !inline) {
-        return <CotBlock styles={styles}>{children}</CotBlock>;
-      }
-
-      return inline ? (
-        <code className={className}>{children}</code>
-      ) : (
-        <pre>
-          <code className={className}>{children}</code>
-        </pre>
-      );
-    },
-  };
 
   // Combine with the custom element mapping for the remark plugin
   const allComponents = {
-    // ...customRenderers,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     "cot-group": CotGroupWrapper as any,
   };
 
-  const sampleMarkdown = `# Welcome to React Markdown Demo with Fluent UI
-
-This is a **sample markdown** document that demonstrates various features with **Fluent UI v9** styling:
-
-## Chain of Thought (COT) Blocks
-
-This is our custom COT fenced block feature:
-
-## Other Features
-
-- **Bold text** and *italic text*
-- [Links to external sites](https://react.dev)
-- Lists and nested items:
-  1. First item
-  2. Second item with \`inline code\`
-  3. Third item
-
-### Regular Code Blocks
-
-\`\`\`javascript
-function greet(name) {
-  console.log('Hello, ' + name + '!');
-  return 'Welcome to the Fluent UI markdown world with COT support!';
-}
-\`\`\`
-
-### Blockquotes
-
-> This is a blockquote styled with Fluent UI design tokens. It provides
-> emphasis to important information or quotes using the brand colors.
-
-### Tables
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| Headers | ✅ | Working with Fluent UI |
-| Lists | ✅ | Working with Fluent UI |
-| Code blocks | ✅ | Working with Fluent UI |
-| Tables | ✅ | Working with Fluent UI |
-| Dark Theme | ✅ | Toggle available |
-| COT Blocks | ✅ | **NEW!** Custom fenced blocks |
-
----
-
-**Current count:** ${count}
-
-*Try clicking the button below to see the count update in this markdown!*
-
-\`\`\`cot-init {id=sess-42 status=thinking}
-Generate SQL for top 5 customers by revenue.
-
-Assume a table \`orders(customer_id, amount)\`. Will aggregate and sort with a deterministic tie-break.
-\`\`\`
-
-\`\`\`cot-step {group=sess-42 id=plan}
-Plan approach.
-
-Use GROUP BY on \`customer_id\`, SUM(amount), and ORDER BY revenue DESC with a tie-break on \`customer_id\`.
-\`\`\`
-
-\`\`\`cot-step {group=sess-42 id=answer}
-Draft initial SQL.
-
-SELECT customer_id, SUM(amount) AS revenue
-FROM orders
-GROUP BY customer_id
-ORDER BY revenue DESC, customer_id
-LIMIT 5;
-\`\`\`
-
-\`\`\`cot-step {group=sess-42 id=answer}
-Refine SQL and clarify assumptions.
-
-Assume \`amount\` is numeric and net of refunds. Keep tie-break on \`customer_id\` for stable ordering.
-SELECT customer_id, SUM(amount) AS revenue
-FROM orders
-GROUP BY customer_id
-ORDER BY revenue DESC, customer_id
-LIMIT 5;
-\`\`\`
-
-\`\`\`cot-step {group=sess-42 id=answer}
-Done — final SQL ready.
-
-SELECT customer_id, SUM(amount) AS revenue
-FROM orders
-GROUP BY customer_id
-ORDER BY revenue DESC, customer_id
-LIMIT 5;
-\`\`\`
-
-\`\`\`cot-summary {group=sess-42 status=done}
-Completed.
-
-Final SQL emitted with deterministic ordering; ready to run.
-\`\`\`
-`;
-
   return (
-    <FluentProvider theme={isDarkTheme ? webDarkTheme : webLightTheme}>
+    <FluentProvider theme={webLightTheme}>
       <div className={styles.container}>
-        <div className={styles.logoContainer}>
-          <a href="https://vite.dev" target="_blank">
-            <Image src={viteLogo} className={styles.logo} alt="Vite logo" />
-          </a>
-          <a href="https://react.dev" target="_blank">
-            <Image
-              src={reactLogo}
-              className={`${styles.logo} ${styles.reactLogo}`}
-              alt="React logo"
-            />
-          </a>
-        </div>
-
-        <Card className={styles.headerCard}>
+        <Card className={styles.editorCard}>
           <CardHeader
-            image={<DocumentRegular />}
-            header={<Title1>Vite + React + Fluent UI</Title1>}
+            image={<CodeTextRegular />}
+            header={<Title2>Markdown Editor</Title2>}
             description={
               <Text>
-                Modern React app with Fluent UI design system and markdown
-                support
+                Edit the markdown content below to see it rendered in real-time
               </Text>
             }
           />
-          <CardPreview>
-            <div
-              style={{
-                padding: tokens.spacingVerticalM,
-                display: "flex",
-                flexDirection: "column",
-                gap: tokens.spacingVerticalM,
-              }}
-            >
-              <div className={styles.themeToggle}>
-                {isDarkTheme ? <DarkThemeRegular /> : <LightbulbRegular />}
-                <Text>Dark theme</Text>
-                <Switch
-                  checked={isDarkTheme}
-                  onChange={(_, data) => setIsDarkTheme(data.checked)}
-                />
-              </div>
-
-              <Button
-                appearance="primary"
-                icon={<CodeTextRegular />}
-                onClick={() => setCount(count + 1)}
-              >
-                Count is {count}
-              </Button>
-
-              <Text>
-                Edit <Text weight="semibold">src/App.tsx</Text> and save to test
-                HMR
-              </Text>
-            </div>
-          </CardPreview>
+          <div style={{ padding: tokens.spacingVerticalM }}>
+            <Textarea
+              className={styles.editorTextarea}
+              value={markdownContent}
+              onChange={(_, data) => setMarkdownContent(data.value)}
+              placeholder="Enter your markdown content here..."
+              resize="vertical"
+            />
+          </div>
         </Card>
 
         <Card className={styles.markdownCard}>
           <CardHeader
             image={<DocumentRegular />}
-            header={<Title2>Markdown Content</Title2>}
+            header={<Title2>Rendered Output</Title2>}
             description={
-              <Text>Sample markdown rendered with Fluent UI styling</Text>
+              <Text>Live preview of your markdown with COT support</Text>
             }
           />
           <div className={styles.markdownContent}>
-            <Text>Testing both simple and advanced COT blocks...</Text>
             <ReactMarkdown
               remarkPlugins={[remarkGfm, remarkCot]}
               rehypePlugins={[rehypeRaw]}
               components={allComponents}
             >
-              {sampleMarkdown}
+              {markdownContent}
             </ReactMarkdown>
           </div>
         </Card>
